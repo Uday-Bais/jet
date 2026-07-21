@@ -2,7 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <iomanip>
-#include <algorithm> // Added for std::sort
+#include <algorithm> //for std::sort
 
 // ROOT headers
 #include "TFile.h"
@@ -10,7 +10,7 @@
 
 using namespace std;
 
-// Struct to represent a particle or pseudojet
+// Struct to represent a particle/pseudojet
 struct Particle {
     int id;
     double pt;
@@ -18,7 +18,7 @@ struct Particle {
     double phi;
 };
 
-// Calculate delta R squared taking periodic boundary of phi into account
+// Calculate delta R squared
 double deltaR2(double eta1, double phi1, double eta2, double phi2) {
     double deta = eta1 - eta2;
     double dphi = phi1 - phi2;
@@ -49,13 +49,13 @@ int main() {
     int target_event = 10;
     vector<Particle> particles;
     
-    // --> NEW: Vector to store the final jets once they are extracted
+    // Vector to store the final jets
     vector<Particle> final_jets; 
     
     int original_id_counter = 0;
     
-    // Configurable pT cut 
-    double pt_cut = 0.5; // Updated to 0.5 as requested in your terminal command
+    // pT cut 
+    double pt_cut = 0.5; 
     
     int nEntries = tree->GetEntries();
     for (int i = 0; i < nEntries; i++) {
@@ -138,7 +138,7 @@ int main() {
             }
         }
         
-        // 3. Print the decision and execute the action
+        // 3. Print the decision 
         cout << "\n--- STEP " << step << " ACTION DECISION ---\n";
         
         if (is_beam) {
@@ -148,7 +148,7 @@ int main() {
                  << ", eta = " << particles[min_i].eta 
                  << ", phi = " << particles[min_i].phi << "\n";
             
-            // --> NEW: Save the jet before deleting it
+            
             final_jets.push_back(particles[min_i]);
             
             particles.erase(particles.begin() + min_i);
@@ -175,12 +175,12 @@ int main() {
         step++;
     }
     
-    // --> NEW: Final Summary Block
+    // Final Summary
     cout << "\n===========================================================\n";
     cout << "COMPLETE. No active particles remaining.\n";
     cout << "===========================================================\n\n";
     
-    // Sort final jets by pT descending (Standard physics convention)
+    // Sort final jets by pT descending
     sort(final_jets.begin(), final_jets.end(), [](const Particle& a, const Particle& b) {
         return a.pt > b.pt;
     });
