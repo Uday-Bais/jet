@@ -2,60 +2,84 @@
 #include <vector>
 #include <cmath>
 #include <iomanip>
-#include <algorithm> //for std::sort
+#include <algorithm> 
+#include <fstream>
 
-// ROOT headers
 #include "TFile.h"
 #include "TTree.h"
 
 using namespace std;
 
-// Struct to represent a particle/pseudojet
 struct Particle {
     int id;
     double pt;
-    double eta;
+    double y;      
     double phi;
+    double px;
+    double py;
+    double pz;
+    double e;
 };
 
-// Calculate delta R squared
-double deltaR2(double eta1, double phi1, double eta2, double phi2) {
-    double deta = eta1 - eta2;
+double deltaR2(double y1, double phi1, double y2, double phi2) {
+    double dy = y1 - y2;
     double dphi = phi1 - phi2;
     
     while (dphi > M_PI) dphi -= 2.0 * M_PI;
     while (dphi < -M_PI) dphi += 2.0 * M_PI;
     
-    return deta * deta + dphi * dphi;
+    return dy * dy + dphi * dphi;
+}
+
+double safe_rapidity(double e, double pz) {
+    double e_plus_pz = e + pz;
+    double e_minus_pz = e - pz;
+    
+    if (e_minus_pz <= 1e-9) {
+        return 10.0; 
+    } else if (e_plus_pz <= 1e-9) {
+        return -10.0; 
+    } else {
+        return 0.5 * log(e_plus_pz / e_minus_pz);
+    }
 }
 
 int main() {
-    TFile *inputFile = new TFile("pythia_events_1m_pt.root", "READ");
+    TFile *inputFile = new TFile("full_history_pythia_20gev_ptHat.root", "READ");
     if (!inputFile->IsOpen()) {
         cerr << "Error: Could not open ROOT file!" << endl;
         return 1;
     }
     
+    ofstream outFile("jet_output.txt");
+    if (!outFile.is_open()) {
+        cerr << "Error: Could not create output text file!" << endl;
+        return 1;
+    }
+    
     TTree *tree = (TTree*)inputFile->Get("ParticleTree");
     
-    int EventID;
-    double pT, eta, phi;
+    int EventID = 0;
+    double pT = 0.0, phi = 0.0;
+    double Energy = 0.0, Px = 0.0, Py = 0.0, Pz = 0.0;
+    bool IsFinal = false;
+    int pdgID = 0;
     
     tree->SetBranchAddress("EventID", &EventID);
     tree->SetBranchAddress("pT", &pT);
-    tree->SetBranchAddress("eta", &eta);
     tree->SetBranchAddress("phi", &phi);
+    tree->SetBranchAddress("Energy", &Energy);
+    tree->SetBranchAddress("Px", &Px);
+    tree->SetBranchAddress("Py", &Py);
+    tree->SetBranchAddress("Pz", &Pz);
+    tree->SetBranchAddress("IsFinal", &IsFinal);
+    tree->SetBranchAddress("pdgID", &pdgID);
     
-    int target_event = 10;
+    int target_event = 0;
     vector<Particle> particles;
-    
-    // Vector to store the final jets
     vector<Particle> final_jets; 
     
     int original_id_counter = 0;
-    
-    // pT cut 
-    double pt_cut = 0.5; 
     
     int nEntries = tree->GetEntries();
     for (int i = 0; i < nEntries; i++) {
@@ -63,142 +87,146 @@ int main() {
         if (EventID > target_event) break; 
         
         if (EventID == target_event) {
-            if (pT <= pt_cut) continue; 
+            if (!IsFinal) continue;
+            
+            int abs_pdg = std::abs(pdgID);
+            if (abs_pdg == 12 || abs_pdg == 14 || abs_pdg == 16) continue;
             
             Particle p;
             p.id = original_id_counter++;
             p.pt = pT;
-            p.eta = eta;
             p.phi = phi;
+            p.px = Px;
+            p.py = Py;
+            p.pz = Pz;
+            p.e  = Energy; 
+            
+            p.y = safe_rapidity(p.e, p.pz);
+            
             particles.push_back(p);
         }
     }
     inputFile->Close();
     
     if (particles.empty()) {
-        cout << "No particles left " << target_event << " with pT > " << pt_cut << " GeV." << endl;
+        outFile << "No visible final-state particles loaded for Event " << target_event << "\n";
+        outFile.close();
         return 1;
     }
     
-    cout << "Loaded " << particles.size() << " particles for Event " << target_event << " (pT > " << pt_cut << " GeV)\n";
-    cout << "===========================================================\n";
+    outFile << "Loaded " << particles.size() << " particles for Event " << target_event << "\n";
+    outFile << "===========================================================\n";
 
     double R = 1;
     double R2 = R * R;
     int step = 1;
     int next_id = 10000; 
     
-    cout << fixed << setprecision(6);
+    outFile << fixed << setprecision(6);
     
     while (!particles.empty()) {
-        cout << "\n====================== STEP " << step << " ======================\n";
-        cout << "Active Particles: " << particles.size() << "\n\n";
-        
-        double min_dist = 1e15; 
+        double min_dist = -1.0; 
         int min_i = -1;
         int min_j = -1;
         bool is_beam = false;
+        bool first_calc = true; 
         
-        // 1. Calculate and print all d_iB
-        cout << "--- Particle-to-Beam Distances (d_iB) ---\n";
         for (size_t i = 0; i < particles.size(); i++) {
-            double inv_pt2 = 1.0 / (particles[i].pt * particles[i].pt);
-            double d_iB = inv_pt2;
+            double pt = particles[i].pt;
+            double inv_pt2 = (pt > 1e-10) ? 1.0 / (pt * pt) : 1e20; 
             
-            cout << "d_{" << particles[i].id << "B} = " << d_iB << "\n";
-            
-            if (d_iB < min_dist) {
-                min_dist = d_iB;
+            if (first_calc || inv_pt2 < min_dist) {
+                min_dist = inv_pt2;
                 min_i = i;
                 is_beam = true;
+                first_calc = false;
             }
         }
         
-        cout << "\n--- Particle-to-Particle Distances (d_ij) ---\n";
-        // 2. Calculate and print all d_ij
         for (size_t i = 0; i < particles.size(); i++) {
             for (size_t j = i + 1; j < particles.size(); j++) {
-                double inv_pti2 = 1.0 / (particles[i].pt * particles[i].pt);
-                double inv_ptj2 = 1.0 / (particles[j].pt * particles[j].pt);
+                double pti = particles[i].pt;
+                double ptj = particles[j].pt;
+                
+                double inv_pti2 = (pti > 1e-10) ? 1.0 / (pti * pti) : 1e20;
+                double inv_ptj2 = (ptj > 1e-10) ? 1.0 / (ptj * ptj) : 1e20;
                 
                 double pt_min2 = min(inv_pti2, inv_ptj2);
-                double dR2 = deltaR2(particles[i].eta, particles[i].phi, particles[j].eta, particles[j].phi);
+                
+                double dR2 = deltaR2(particles[i].y, particles[i].phi, particles[j].y, particles[j].phi);
                 
                 double d_ij = pt_min2 * (dR2 / R2);
                 
-                cout << "d_{" << particles[i].id << "," << particles[j].id << "} = " << d_ij 
-                     << "  [min(1/pT^2) = " << pt_min2 << ", dR^2/R^2 = " << (dR2/R2) << "]\n";
-                
-                if (d_ij < min_dist) {
+                if (first_calc || d_ij < min_dist) {
                     min_dist = d_ij;
                     min_i = i;
                     min_j = j;
                     is_beam = false;
+                    first_calc = false;
                 }
             }
         }
         
-        // 3. Print the decision 
-        cout << "\n--- STEP " << step << " ACTION DECISION ---\n";
-        
         if (is_beam) {
-            cout << "ABSOLUTE MINIMUM: d_{" << particles[min_i].id << "B} = " << min_dist << "\n";
-            cout << "ACTION: Particle " << particles[min_i].id << " is isolated. Declaring FINAL JET.\n";
-            cout << "    Jet Kinematics: pT = " << particles[min_i].pt 
-                 << ", eta = " << particles[min_i].eta 
-                 << ", phi = " << particles[min_i].phi << "\n";
-            
-            
             final_jets.push_back(particles[min_i]);
-            
             particles.erase(particles.begin() + min_i);
         } else {
-            cout << "ABSOLUTE MINIMUM: d_{" << particles[min_i].id << "," << particles[min_j].id << "} = " << min_dist << "\n";
-            cout << "ACTION: Merging Particle " << particles[min_i].id << " and Particle " << particles[min_j].id << " into New Pseudojet " << next_id << ".\n";
-            
             Particle merged;
             merged.id = next_id++;
-            merged.pt = particles[min_i].pt + particles[min_j].pt;
-            merged.eta = (particles[min_i].pt * particles[min_i].eta + particles[min_j].pt * particles[min_j].eta) / merged.pt;
-            merged.phi = (particles[min_i].pt * particles[min_i].phi + particles[min_j].pt * particles[min_j].phi) / merged.pt;
             
-            cout << "    final properties: pT = " << merged.pt 
-                 << ", eta = " << merged.eta 
-                 << ", phi = " << merged.phi << "\n";
+            merged.px = particles[min_i].px + particles[min_j].px;
+            merged.py = particles[min_i].py + particles[min_j].py;
+            merged.pz = particles[min_i].pz + particles[min_j].pz;
+            merged.e  = particles[min_i].e + particles[min_j].e;
+            
+            merged.pt = sqrt(merged.px * merged.px + merged.py * merged.py);
+            merged.phi = atan2(merged.py, merged.px);
+            
+            merged.y = safe_rapidity(merged.e, merged.pz);
             
             particles.erase(particles.begin() + max(min_i, min_j));
             particles.erase(particles.begin() + min(min_i, min_j));
             
             particles.push_back(merged);
         }
-        
         step++;
     }
     
-    // Final Summary
-    cout << "\n===========================================================\n";
-    cout << "COMPLETE. No active particles remaining.\n";
-    cout << "===========================================================\n\n";
-    
-    // Sort final jets by pT descending
     sort(final_jets.begin(), final_jets.end(), [](const Particle& a, const Particle& b) {
         return a.pt > b.pt;
     });
 
-    cout << "FINAL JET SUMMARY\n";
-    cout << "Total Final Jets Extracted: " << final_jets.size() << "\n\n";
-    cout << left << setw(10) << "Jet ID" 
-         << setw(15) << "pT [GeV]" 
-         << setw(15) << "eta" 
-         << setw(15) << "phi" << "\n";
-    cout << "------------------------------------------------------\n";
+    outFile << "\nFINAL JET SUMMARY (Filtered for pT > 10 GeV)\n";
+    outFile << left << setw(10) << "Jet ID" 
+            << setw(12) << "pT" 
+            << setw(12) << "y" 
+            << setw(12) << "phi" 
+            << setw(12) << "pX"
+            << setw(12) << "pY"
+            << setw(12) << "pZ"
+            << setw(12) << "E" << "\n";
+    outFile << "--------------------------------------------------------------------------------------------\n";
+    
+    double jet_pt_cut = 10.0;
+    int valid_jets = 0;
     
     for (const auto& jet : final_jets) {
-        cout << left << setw(10) << jet.id 
-             << setw(15) << jet.pt 
-             << setw(15) << jet.eta 
-             << setw(15) << jet.phi << "\n";
+        if (jet.pt > jet_pt_cut) {
+            outFile << left << setw(10) << jet.id 
+                    << setw(12) << jet.pt 
+                    << setw(12) << jet.y 
+                    << setw(12) << jet.phi 
+                    << setw(12) << jet.px
+                    << setw(12) << jet.py
+                    << setw(12) << jet.pz
+                    << setw(12) << jet.e << "\n";
+            valid_jets++;
+        }
     }
+    
+    outFile << "\nTotal Jets above threshold: " << valid_jets << "\n";
+    
+    outFile.close();
     
     return 0;
 }
